@@ -8,7 +8,9 @@ import java.io.Serializable;
  * Time: 2:07 PM
  * Description:
  */
-public class RequestHeader implements Serializable {
+public class Request implements Serializable {
+    private static final long serialVersionUID = 42L;
+
     public enum reqCode{
         SYN,
         RST
@@ -17,8 +19,9 @@ public class RequestHeader implements Serializable {
     public reqCode req;
     public int seq;
 
-    public RequestHeader(reqCode req, int seq) {
+    public Request(reqCode req, int seq) {
         this.req = req;
         this.seq = seq;
     }
+
 }

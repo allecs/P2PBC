@@ -21,7 +21,7 @@ public class RootServer extends ServerBase{
             while (true){
                 synchronized (bufLock){
                     current++;
-                    //update buffer
+
                 }
                 try {
                     sleep(1000);

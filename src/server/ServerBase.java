@@ -1,7 +1,8 @@
 package server;
 
 
-import protocol.ResponseHeader;
+import protocol.Request;
+import protocol.Response;
 
 import java.io.*;
 import java.net.*;
@@ -11,7 +12,7 @@ import java.util.Vector;
 public abstract class ServerBase {
     protected Status status;
     protected ByteBuffer buf;
-    protected byte[] bufLock;
+    protected final byte[] bufLock;
     protected long current;
 
     protected Vector<InetSocketAddress> children;
@@ -68,22 +69,57 @@ public abstract class ServerBase {
             }
 
             public void run(){
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                ObjectOutputStream oos = null;
+                byte[] bufsend = null;
+                byte[] bufrecv = new byte[1024];
+
+
+                Request request = null;
+                ByteArrayInputStream bais =
+                        new ByteArrayInputStream(packet.getData());
+                ObjectInputStream in = null;
                 try {
-                    oos = new ObjectOutputStream(baos);
+                    in = new ObjectInputStream(bais);
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
-                if (inChildren(packet.getSocketAddress())){//seems client missed a SYN_ACK
+                try {
+                    request = (Request) in.readObject();
+                } catch (ClassNotFoundException e) {
+                    e.printStackTrace();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                try {
+                    in.close();
+                    bais.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+
+                ByteArrayOutputStream baos = null;
+                if (inChildren(packet.getSocketAddress()) && request.req ==
+                        Request.reqCode.SYN){//seems client missed a SYN_ACK
                     try {
-                        assert oos != null;
-                        oos.writeObject(new ResponseHeader(ResponseHeader.retCode.SYN_ACK, current, "", "", 0, 0));
-                        oos.close();
+                        Response response = new Response(Response.retCode.SYN_ACK, current, null);
+                        baos = new ByteArrayOutputStream(1024);
+                        ObjectOutputStream out =
+                                new ObjectOutputStream(baos);
+                        out.writeObject(request);
+                        out.close();
+                        makeAndSend(baos.toByteArray(), packet.getSocketAddress());
+                        baos.close();
+                        return;
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                } else {
+                } else if (inChildren(packet.getSocketAddress()) && request.req ==
+                        Request.reqCode.RST){//remove
+                    synchronized (childrenLock){
+                        children.remove(getIndex((InetSocketAddress)packet.getSocketAddress()));
+                        System.out.println("Child "+packet.getSocketAddress()+" removed");
+                    }
+                }
+                else if (request.req == Request.reqCode.SYN){
                     boolean full;
                     InetSocketAddress child1 = null;
                     InetSocketAddress child2 = null;
@@ -91,31 +127,57 @@ public abstract class ServerBase {
                         if (children.size() < maxChildrenNum){
                             full = false;
                             children.add((InetSocketAddress) packet.getSocketAddress());
+                            System.out.println("Child "+packet.getSocketAddress()+" added");
+                            Response response = new Response(Response.retCode.SYN_ACK,
+                                    current, null);
+                            ObjectOutputStream out = null;
+                            try {
+                                baos = new ByteArrayOutputStream(1024);
+                                out = new ObjectOutputStream(baos);
+                                out.writeObject(response);
+                                out.close();
+                                makeAndSend(baos.toByteArray(), packet.getSocketAddress());
+                                baos.close();
+                                return;
+                            } catch (IOException e) {
+                                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+                            }
                         }
                         else{
                             full = true;
-                            child1 = children.firstElement();
-                            child2 = children.lastElement();
+                            child1 = new InetSocketAddress(children.firstElement().getHostName(), children.firstElement().getPort()-1);
+                            child2 = new InetSocketAddress(children.lastElement().getHostName(), children.lastElement().getPort()-1);
                         }
                     }
                     if (full){
                         try {
-                            assert oos != null;
-                            oos.writeObject(new ResponseHeader(ResponseHeader.retCode.RECURSION, current,
-                                    child1.getHostName(), child2.getHostName(), child1.getPort(), child2.getPort()));
-                            oos.close();
+                            Response response = new Response(Response.retCode.RECURSION,
+                                    current, new InetSocketAddress[]{child1, child2});
+                            baos = new ByteArrayOutputStream(1024);
+                            ObjectOutputStream out = new ObjectOutputStream(baos);
+                            out.writeObject(response);
+                            out.close();
+                            makeAndSend(baos.toByteArray(), packet.getSocketAddress());
+                            baos.close();
+                            return;
                         } catch (IOException e) {
                             e.printStackTrace();
                         }
                     }
                 }
-                makeAndSend(baos.toByteArray(), packet.getSocketAddress());
             }
 
             private void appendCurrent(ObjectOutputStream oos) throws IOException {
                 oos.write(buffer);
             }
         }
+    }
+
+    private int getIndex(InetSocketAddress socketAddress) {
+        for(int i = 0; i < children.size(); ++i){
+            if (children.get(i).equals(socketAddress)) return i;
+        }
+        return -1;
     }
 
 
